@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/">Stock Trading App</a>
+            <div class="collapse navbar-collapse">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="/portfolio">Portfolio</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/transaction_history">Transaction History</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/buy_stock">Buy Stock</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/sell_stock">Sell Stock</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/add_funds">Add Funds</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/stock_trend">View Stock Trend</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/suggest_stocks_to_purchase">Suggested Stocks to Purchase</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/suggest_stocks_to_sell">Suggested Stocks to Sell</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        {% if success_message %}
+        <div class="alert alert-success">{{ success_message }}</div>
+        {% endif %}
+        {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>
