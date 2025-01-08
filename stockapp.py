@@ -56,15 +56,25 @@ def get_stock_info(ticker):
         ticker += ".NS"  # Append ".NS" for Indian stocks
         stock = yf.Ticker(ticker)
         stock_data = stock.history(period="1d")
+        if stock_data.empty:
+            raise ValueError(f"No data found for ticker: {ticker}")
         current_price = stock_data['Close'].iloc[-1]
         daily_high = stock_data['High'].iloc[-1]
         daily_low = stock_data['Low'].iloc[-1]
-        yearly_high = stock.info['fiftyTwoWeekHigh']
-        yearly_low = stock.info['fiftyTwoWeekLow']
+        yearly_high = stock.info.get('fiftyTwoWeekHigh', None)
+        yearly_low = stock.info.get('fiftyTwoWeekLow', None)
         return current_price, daily_high, daily_low, yearly_high, yearly_low
     except Exception as e:
         print(f"Error fetching data for {ticker}: {e}")
         return None, None, None, None, None
+
+def get_stock_info_with_retry(ticker, retries=3):
+    for attempt in range(retries):
+        current_price, daily_high, daily_low, yearly_high, yearly_low = get_stock_info(ticker)
+        if current_price is not None:
+            return current_price, daily_high, daily_low, yearly_high, yearly_low
+        time.sleep(1)  # Wait 1 second before retrying
+    return None, None, None, None, None
 
 @app.route('/')
 def index():
@@ -106,11 +116,11 @@ def stock_trend():
     if request.method == 'POST':
         try:
             # Retrieve form data
-            ticker = request.form.get('ticker', '').upper()
+            ticker = request.form.get('ticker', '').upper().strip()
             
             # Validate input
             if not ticker:
-                return render_template('stock_trend.html', error="Please enter a valid stock ticker.")
+                return render_template('buy_stock.html', error="Ticker cannot be empty.", balance=users[current_user]["cash_balance"])
 
             # Fetch stock data for the last 6 months
             stock = yf.Ticker(ticker + ".NS")
