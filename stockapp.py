@@ -8,6 +8,10 @@ from flask import send_file
 import matplotlib
 matplotlib.use('Agg')  # Use a non-GUI backend
 import matplotlib.pyplot as plt
+from urllib.parse import quote as url_quote
+from werkzeug.urls import url_quote
+
+
 
 
 app = Flask(__name__)
