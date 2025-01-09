@@ -211,7 +211,7 @@ def add_funds():
 @app.route('/buy_stock', methods=['GET', 'POST'])
 def buy_stock():
     username = get_current_user()  # Fetch the current user from the session
-    if not username:
+    if not username or username not in users:
         return redirect('/')
 
     if request.method == 'POST':
