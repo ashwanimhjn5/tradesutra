@@ -8,11 +8,21 @@ from flask import send_file
 import matplotlib
 matplotlib.use('Agg')  # Use a non-GUI backend
 import matplotlib.pyplot as plt
-from urllib.parse import quote
+
+from urllib.parse import quote as url_quote
+
+from flask import Flask, render_template, request, redirect, jsonify, session
+
+from urllib.parse import quote as url_quote
+#from werkzeug.urls import url_quote
+
+
 
 
 
 app = Flask(__name__)
+app.secret_key = '@shw@n!'  # Replace with a securely generated key
+
 
 # File to store user profiles and portfolios
 USER_DATA_FILE = "user_data.json"
@@ -50,12 +60,16 @@ def initialize_user(username):
             "transaction_history": []
         }
 
+def get_current_user():
+    return session.get('username')
+
 # Function to fetch real-time stock data
 def get_stock_info(ticker):
     try:
         ticker += ".NS"  # Append ".NS" for Indian stocks
         stock = yf.Ticker(ticker)
         stock_data = stock.history(period="1d")
+
         if stock_data.empty:
             raise ValueError(f"No data found for ticker: {ticker}")
         current_price = stock_data['Close'].iloc[-1]
@@ -63,10 +77,18 @@ def get_stock_info(ticker):
         daily_low = stock_data['Low'].iloc[-1]
         yearly_high = stock.info.get('fiftyTwoWeekHigh', None)
         yearly_low = stock.info.get('fiftyTwoWeekLow', None)
+
+        current_price = stock_data['Close'].iloc[-1]
+        daily_high = stock_data['High'].iloc[-1]
+        daily_low = stock_data['Low'].iloc[-1]
+        yearly_high = stock.info['fiftyTwoWeekHigh']
+        yearly_low = stock.info['fiftyTwoWeekLow']
+
         return current_price, daily_high, daily_low, yearly_high, yearly_low
     except Exception as e:
         print(f"Error fetching data for {ticker}: {e}")
         return None, None, None, None, None
+
 
 def get_stock_info_with_retry(ticker, retries=3):
     for attempt in range(retries):
@@ -75,6 +97,7 @@ def get_stock_info_with_retry(ticker, retries=3):
             return current_price, daily_high, daily_low, yearly_high, yearly_low
         time.sleep(1)  # Wait 1 second before retrying
     return None, None, None, None, None
+
 
 @app.route('/')
 def index():
@@ -89,38 +112,43 @@ def index():
         {"ticker": "ONGC", "change": -4.89},
         {"ticker": "BPCL", "change": -4.45},
     ]
-    return render_template('index.html', users=list(users.keys()), current_user=current_user, top_gainers=top_gainers,
-        top_losers=top_losers)
+    return render_template('index.html', users=list(users.keys()), current_user=get_current_user(), top_gainers=top_gainers, top_losers=top_losers)
 
 @app.route('/welcome', methods=['GET', 'POST'])
 def welcome():
-    global current_user
     if request.method == 'POST':
         username = request.form.get('username')
         if not username:
             return redirect('/')
         initialize_user(username)
-        current_user = username
-    if current_user is None:
+        session['username'] = username  # Save the username in the session
+    if not get_current_user():
         return redirect('/')
-    user_data = users[current_user]
+    user_data = users[get_current_user()]
     portfolio = user_data.get("portfolio", {})
-    return render_template('welcome.html', current_user=current_user, portfolio=portfolio, balance=user_data["cash_balance"])
+    return render_template('welcome.html', current_user=get_current_user(), portfolio=portfolio, balance=user_data["cash_balance"])
 
 @app.route('/stock_trend', methods=['GET', 'POST'])
 def stock_trend():
-    global current_user
-    if current_user is None:
+    if not get_current_user():
         return redirect('/')
 
     if request.method == 'POST':
         try:
             # Retrieve form data
+
             ticker = request.form.get('ticker', '').upper().strip()
             
             # Validate input
             if not ticker:
                 return render_template('buy_stock.html', error="Ticker cannot be empty.", balance=users[current_user]["cash_balance"])
+
+            ticker = request.form.get('ticker', '').upper()
+            
+            # Validate input
+            if not ticker:
+                return render_template('stock_trend.html', error="Please enter a valid stock ticker.")
+
 
             # Fetch stock data for the last 6 months
             stock = yf.Ticker(ticker + ".NS")
@@ -157,28 +185,33 @@ def stock_trend():
 
 @app.route('/switch_user', methods=['POST'])
 def switch_user():
-    global current_user
     username = request.form['username']
     initialize_user(username)
-    current_user = username
+    session['username'] = username  # Update session with the new user
     save_user_data()
+    return redirect('/')
+
+@app.route('/logout')
+def logout():
+    session.clear()  # Clear the session
     return redirect('/')
 
 @app.route('/add_funds', methods=['GET', 'POST'])
 def add_funds():
-    global current_user
+    if not get_current_user():
+        return redirect('/')
     if request.method == 'POST':
         amount = float(request.form['amount'])
-        users[current_user]["cash_balance"] += amount
+        users[get_current_user()]["cash_balance"] += amount
         save_user_data()
         return redirect('/welcome')
-    return render_template('add_funds.html', balance=users[current_user]["cash_balance"])
+    return render_template('add_funds.html', balance=users[get_current_user()]["cash_balance"])
 
 
 @app.route('/buy_stock', methods=['GET', 'POST'])
 def buy_stock():
-    global current_user
-    if current_user is None:
+    username = get_current_user()  # Fetch the current user from the session
+    if not username:
         return redirect('/')
 
     if request.method == 'POST':
@@ -189,21 +222,21 @@ def buy_stock():
             
             # Validate form inputs
             if not ticker or quantity <= 0:
-                return render_template('buy_stock.html', error="Invalid ticker or quantity.", balance=users[current_user]["cash_balance"])
+                return render_template('buy_stock.html', error="Invalid ticker or quantity.", balance=users[username]["cash_balance"])
 
             # Fetch stock price
             current_price, _, _, _, _ = get_stock_info(ticker)
             if current_price is None:
-                return render_template('buy_stock.html', error="Failed to fetch stock price.", balance=users[current_user]["cash_balance"])
+                return render_template('buy_stock.html', error="Failed to fetch stock price.", balance=users[username]["cash_balance"])
 
             # Calculate total cost
             total_cost = quantity * current_price
-            if total_cost > users[current_user]["cash_balance"]:
-                return render_template('buy_stock.html', error="Insufficient funds.", balance=users[current_user]["cash_balance"])
+            if total_cost > users[username]["cash_balance"]:
+                return render_template('buy_stock.html', error="Insufficient funds.", balance=users[username]["cash_balance"])
 
             # Update portfolio and cash balance
-            users[current_user]["cash_balance"] -= total_cost
-            portfolio = users[current_user]["portfolio"]
+            users[username]["cash_balance"] -= total_cost
+            portfolio = users[username].get("portfolio", {})
             if ticker in portfolio:
                 portfolio[ticker]["quantity"] += quantity
                 portfolio[ticker]["total_investment"] += total_cost
@@ -211,7 +244,7 @@ def buy_stock():
                 portfolio[ticker] = {"quantity": quantity, "total_investment": total_cost}
 
             # Record transaction
-            users[current_user]["transaction_history"].append({
+            users[username]["transaction_history"].append({
                 "type": "buy",
                 "ticker": ticker,
                 "quantity": quantity,
@@ -222,21 +255,22 @@ def buy_stock():
             # Save data and redirect
             save_user_data()
             success_message = f"Successfully purchased {quantity} shares of {ticker} at ₹{current_price:.2f} each."
-            return render_template('welcome.html', current_user=current_user, portfolio=portfolio, balance=users[current_user]["cash_balance"], success_message=success_message)
+            return render_template('welcome.html', current_user=username, portfolio=portfolio, balance=users[username]["cash_balance"], success_message=success_message)
 
         except Exception as e:
             print(f"Error buying stock: {e}")
-            return render_template('buy_stock.html', error="An error occurred while processing your request.", balance=users[current_user]["cash_balance"])
+            return render_template('buy_stock.html', error="An error occurred while processing your request.", balance=users[username]["cash_balance"])
 
     # GET request to render the buy stock page
-    return render_template('buy_stock.html', balance=users[current_user]["cash_balance"])
+    return render_template('buy_stock.html', balance=users[username]["cash_balance"])
+
 
 
 @app.route('/sell_stock', methods=['GET', 'POST'])
 def sell_stock():
-    global current_user
-    if current_user is None:
+    if not get_current_user():
         return redirect('/')
+    
     try:
         if request.method == 'POST':
             # Retrieve form data
@@ -245,20 +279,23 @@ def sell_stock():
 
             # Validate input
             if not ticker or quantity <= 0:
-                print("Invalid ticker or quantity.")
-                return redirect('/welcome')
+                return render_template('sell_stock.html', error="Invalid ticker or quantity.", 
+                                       portfolio=users[get_current_user()]["portfolio"], 
+                                       balance=users[get_current_user()]["cash_balance"])
 
             # Fetch user's portfolio
-            portfolio = users[current_user].get("portfolio", {})
+            portfolio = users[get_current_user()].get("portfolio", {})
             if ticker not in portfolio or portfolio[ticker]["quantity"] < quantity:
-                print(f"Insufficient stock quantity or ticker {ticker} not in portfolio.")
-                return redirect('/welcome')
+                return render_template('sell_stock.html', error="Insufficient stock quantity or ticker not in portfolio.",
+                                       portfolio=users[get_current_user()]["portfolio"], 
+                                       balance=users[get_current_user()]["cash_balance"])
 
             # Get the current price of the stock
             current_price, _, _, _, _ = get_stock_info(ticker)
             if current_price is None:
-                print(f"Failed to fetch current price for {ticker}.")
-                return redirect('/welcome')
+                return render_template('sell_stock.html', error="Failed to fetch current price for the stock.",
+                                       portfolio=users[get_current_user()]["portfolio"], 
+                                       balance=users[get_current_user()]["cash_balance"])
 
             # Calculate earnings and update portfolio
             total_earnings = current_price * quantity
@@ -266,13 +303,13 @@ def sell_stock():
             portfolio[ticker]["quantity"] -= quantity
             portfolio[ticker]["total_investment"] -= investment_per_share * quantity
 
-            # Remove the stock from portfolio if quantity is zero
+            # Remove the stock from the portfolio if quantity becomes zero
             if portfolio[ticker]["quantity"] == 0:
                 del portfolio[ticker]
 
             # Update user's cash balance and transaction history
-            users[current_user]["cash_balance"] += total_earnings
-            users[current_user]["transaction_history"].append({
+            users[get_current_user()]["cash_balance"] += total_earnings
+            users[get_current_user()]["transaction_history"].append({
                 "type": "sell",
                 "ticker": ticker,
                 "quantity": quantity,
@@ -282,25 +319,29 @@ def sell_stock():
 
             # Save updated data
             save_user_data()
-            print(f"Sold {quantity} shares of {ticker} at ₹{current_price} each.")
+
             return redirect('/welcome')
 
         # For GET requests, render the sell_stock page
-        portfolio = users[current_user].get("portfolio", {})
-        return render_template('sell_stock.html', portfolio=portfolio, balance=users[current_user]["cash_balance"])
+        portfolio = users[get_current_user()].get("portfolio", {})
+        return render_template('sell_stock.html', portfolio=portfolio, 
+                               balance=users[get_current_user()]["cash_balance"])
 
     except Exception as e:
         print(f"Error selling stock: {e}")
-        return redirect('/welcome')
+        return render_template('sell_stock.html', error="An unexpected error occurred.", 
+                               portfolio=users[get_current_user()]["portfolio"], 
+                               balance=users[get_current_user()]["cash_balance"])
+
 
 
 @app.route('/portfolio')
 def portfolio():
-    global current_user
-    if current_user is None:
+    username = get_current_user()
+    if not username:
         return redirect('/')
     
-    user_data = users.get(current_user, {})
+    user_data = users.get(username, {})
     portfolio = user_data.get("portfolio", {})
     cash_balance = user_data.get("cash_balance", 0)
 
@@ -333,14 +374,18 @@ def portfolio():
 
 
 
+
 @app.route('/transaction_history')
 def transaction_history():
-    global current_user
-    transaction_history = users.get(current_user, {}).get("transaction_history", [])
+    if not get_current_user():
+        return redirect('/')
+    transaction_history = users[get_current_user()].get("transaction_history", [])
     return render_template('transaction_history.html', transaction_history=transaction_history)
 
 @app.route('/suggest_stocks_to_purchase', methods=['GET'])
 def suggest_stocks_to_purchase():
+    if not get_current_user():
+        return redirect('/')
     stock_list = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ITC.NS", "ICICIBANK.NS", "SBIN.NS", "BHARTIARTL.NS", "HINDUNILVR.NS", "WIPRO.NS"]
     stock_data = {}
     for ticker in stock_list:
@@ -360,6 +405,8 @@ def suggest_stocks_to_purchase():
 
 @app.route('/suggest_stocks_to_sell', methods=['GET'])
 def suggest_stocks_to_sell():
+    if not get_current_user():
+        return redirect('/')
     global current_user
     user_data = users.get(current_user, {})
     portfolio = user_data.get("portfolio", {})
@@ -377,5 +424,4 @@ def suggest_stocks_to_sell():
 
 if __name__ == '__main__':
     load_user_data()
-    app.run(debug=True, port=7000)
-
+    app.run(debug=True, port=7003)
